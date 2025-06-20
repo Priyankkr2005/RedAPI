@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Monitoring Logs</title>
+  <style>
+    body {
+      font-family: monospace;
+      background-color: #eef6fc;
+      padding: 20px;
+    }
+    h2 {
+      font-family: sans-serif;
+      display: flex;
+      align-items: center;
+    }
+    .log-box {
+      background-color: #fff;
+      border-radius: 10px;
+      padding: 1rem;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+      white-space: pre-wrap;
+    }
+  </style>
+</head>
+<body>
+  <h2>📄 Monitoring Logs</h2>
+  <div id="logContainer" class="log-box">Loading logs...</div>
+  <script>
+    let stop = false;
+    async function fetchLogs() {
+      if (stop) return;
+      try {
+        const res = await fetch('/logs');
+        const logs = await res.text();
+        document.getElementById('logContainer').textContent = logs;
+      } catch (err) {
+        console.error('Failed to fetch logs', err);
+      }
+    }
+    setInterval(fetchLogs, 3000);
+    fetchLogs();
+    window.addEventListener('beforeunload', () => { stop = true; });
+  </script>
+</body>
+</html>
