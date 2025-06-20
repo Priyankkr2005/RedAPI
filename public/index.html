@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Red Dolphin – Monitor Your Website</title>
+  <title>RedApe – Monitor Your API</title>
   <style>
     body {
       font-family: 'Segoe UI', sans-serif;
@@ -65,19 +65,24 @@
   </style>
 </head>
 <body>
-  <h1>Red Dolphin</h1>
+  <h1>RedApe</h1>
   <div class="container">
     <form id="monitorForm" novalidate>
-      <label for="url">Company URL</label>
-      <input type="text" id="url" name="url" placeholder="https://example.com" required>
+      <label for="url">API Endpoint</label>
+      <input type="text" id="url" name="url" placeholder="https://api.example.com/health" required>
+
       <label for="name">Your Name</label>
       <input type="text" id="name" name="name" required>
+
       <label for="email">Company Email</label>
       <input type="email" id="email" name="email" required>
+
       <label for="phone">Phone (optional)</label>
       <input type="text" id="phone" name="phone">
+
       <label for="countryCode">Country Code (optional)</label>
       <input type="text" id="countryCode" name="countryCode" placeholder="+91">
+
       <label for="interval">Check Interval</label>
       <select id="interval" name="interval" required>
         <option value="10sec">Every 10 seconds</option>
@@ -85,14 +90,24 @@
         <option value="1min">Every 1 minute</option>
         <option value="5min">Every 5 minutes</option>
       </select>
+
+      <!-- NEW FIELDS -->
+      <label for="method">Request Method</label>
+      <select id="method" name="method">
+        <option value="GET">GET</option>
+        <option value="POST">POST</option>
+      </select>
+
+      <label for="expectedStatus">Expected Status Code</label>
+      <input type="number" id="expectedStatus" name="expectedStatus" value="200">
+
       <button type="submit">Register</button>
     </form>
-    
-    <!-- ✅ Updated logs button -->
+
     <button id="logsBtn" onclick="window.open('/logs', '_blank')">📄 Logs & Status</button>
-    
     <button id="stopBtn">⛔ Stop Monitoring</button>
   </div>
+
   <script>
     const form = document.getElementById('monitorForm');
     form.addEventListener('submit', async (e) => {
@@ -101,14 +116,18 @@
       if (!/^https?:\/\//i.test(url)) {
         url = 'https://' + url;
       }
+
       const data = {
         url,
         name: form.name.value.trim(),
         email: form.email.value.trim(),
         phone: form.phone.value.trim(),
         countryCode: form.countryCode.value.trim(),
-        interval: form.interval.value
+        interval: form.interval.value,
+        method: form.method.value,
+        expectedStatus: parseInt(form.expectedStatus.value)
       };
+
       try {
         const response = await fetch('/register', {
           method: 'POST',
