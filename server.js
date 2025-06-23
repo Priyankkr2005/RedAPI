@@ -1,21 +1,27 @@
-// server.js (Full RedApe - Ready for Render Deployment)
-require('dotenv').config();
 const express = require('express');
 const bodyParser = require('body-parser');
 const mongoose = require('mongoose');
+const dotenv = require('dotenv');
 const nodemailer = require('nodemailer');
 const twilio = require('twilio');
-const cron = require('node-cron');
 const axios = require('axios');
+const cron = require('node-cron');
+const path = require('path');
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+dotenv.config();
 
+// Middleware
 app.use(bodyParser.json());
 app.use(express.static('public'));
 
-mongoose.connect(process.env.MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true });
+// DB Setup
+mongoose.connect(process.env.MONGO_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+});
 
+// Model
 const monitorSchema = new mongoose.Schema({
   url: String,
   name: String,
@@ -23,25 +29,20 @@ const monitorSchema = new mongoose.Schema({
   phone: String,
   countryCode: String,
   interval: String,
-  method: { type: String, default: 'GET' },
-  expectedStatus: { type: Number, default: 200 }
+  method: String,
+  expectedStatus: Number,
+  logs: [
+    {
+      start: Date,
+      end: Date,
+      durationMinutes: Number,
+    },
+  ],
 });
+
 const Monitor = mongoose.model('Monitor', monitorSchema);
 
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS
-  }
-});
-
-const twilioClient = twilio(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
-
-const activeTasks = {};
-const downtimeTracker = {};
-
-function getCronExpression(interval) {
+const getCronExpression = (interval) => {
   switch (interval) {
     case '10sec': return '*/10 * * * * *';
     case '30sec': return '*/30 * * * * *';
@@ -49,65 +50,128 @@ function getCronExpression(interval) {
     case '5min': return '*/5 * * * *';
     default: return null;
   }
-}
+};
 
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS,
+  },
+});
+
+const twilioClient = twilio(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
+const activeTasks = {};
+const downtimeTracker = {};
+
+// Serve logs.html
+app.get('/logs', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'logs.html'));
+});
+
+// Fetch all monitors (logs + delete)
+app.get('/api/monitors', async (req, res) => {
+  const monitors = await Monitor.find({}, '-__v');
+  res.json(monitors);
+});
+
+// Delete monitor
+app.delete('/api/monitor/:id', async (req, res) => {
+  const id = req.params.id;
+  await Monitor.findByIdAndDelete(id);
+
+  if (activeTasks[id]) {
+    activeTasks[id].stop();
+    delete activeTasks[id];
+  }
+
+  delete downtimeTracker[id];
+  res.send('Deleted');
+});
+
+// Register monitor
 app.post('/register', async (req, res) => {
-  const { url, name, email, phone, countryCode, interval, method = 'GET', expectedStatus = 200 } = req.body;
+  const { url, name, email, phone, countryCode, interval, method, expectedStatus } = req.body;
   const cronExpr = getCronExpression(interval);
   if (!cronExpr) return res.status(400).send('Invalid interval.');
 
-  const newMonitor = new Monitor({ url, name, email, phone, countryCode, interval, method, expectedStatus });
+  const newMonitor = new Monitor({
+    url,
+    name,
+    email,
+    phone,
+    countryCode,
+    interval,
+    method: method || 'GET',
+    expectedStatus: expectedStatus || 200,
+    logs: []
+  });
+
   await newMonitor.save();
   const monitorId = newMonitor._id;
-  downtimeTracker[monitorId] = false;
+  downtimeTracker[monitorId] = null;
 
   activeTasks[monitorId] = cron.schedule(cronExpr, async () => {
     const now = new Date();
-
     try {
-      const response = await axios({ url, method, timeout: 5000 });
-      if (response.status === expectedStatus) {
-        console.log(`[API OK ✅] ${method} ${url} at ${now.toISOString()}`);
-        downtimeTracker[monitorId] = false;
+      const response = await axios({ method: method || 'GET', url, timeout: 5000 });
+      const statusMatches = response.status === expectedStatus;
+      if (statusMatches) {
+        console.log(`[UP] ${url} at ${now.toISOString()}`);
+
+        if (downtimeTracker[monitorId]?.start) {
+          const { start } = downtimeTracker[monitorId];
+          const end = now;
+          const duration = Math.round((end - start) / 60000);
+
+          const freshMonitor = await Monitor.findById(monitorId);
+          if (freshMonitor) {
+            freshMonitor.logs.push({ start, end, durationMinutes: duration });
+            await freshMonitor.save();
+          }
+
+          downtimeTracker[monitorId] = null;
+        }
       } else {
         throw new Error(`Expected ${expectedStatus}, got ${response.status}`);
       }
     } catch (err) {
-      console.log(`[API DOWN ❌] ${method} ${url} - ${err.message}`);
-
-      // Send alert on every failure cycle
-      transporter.sendMail({
-        from: process.env.EMAIL_USER,
-        to: email,
-        subject: `🚨 API Still Down: ${method} ${url}`,
-        text: `${method} ${url} is still down at ${now.toLocaleTimeString()} – ${err.message}`
-      }).catch(console.error);
-
-      if (phone && countryCode) {
-        twilioClient.messages.create({
-          body: `🚨 API STILL DOWN: ${method} ${url} - ${err.message}`,
-          from: process.env.TWILIO_PHONE,
-          to: `${countryCode}${phone}`
-        }).catch(console.error);
+      console.log(`[DOWN] ${url} at ${now.toISOString()}`);
+      if (!downtimeTracker[monitorId]) {
+        downtimeTracker[monitorId] = { start: now, notified: false };
       }
-
-      downtimeTracker[monitorId] = true;
+      const tracked = downtimeTracker[monitorId];
+      const durationMs = now - tracked.start;
+      if (!tracked.notified && durationMs <= 5 * 60 * 1000) {
+        downtimeTracker[monitorId].notified = true;
+        transporter.sendMail({
+          from: process.env.EMAIL_USER,
+          to: email,
+          subject: `🚨 ${url} is DOWN`,
+          text: `${url} is down as of ${now.toLocaleTimeString()}`
+        }).catch(console.error);
+        if (phone && countryCode) {
+          twilioClient.messages.create({
+            body: `${url} is DOWN!`,
+            from: process.env.TWILIO_PHONE,
+            to: `${countryCode}${phone}`
+          }).catch(console.error);
+        }
+      }
     }
   });
 
-  res.send('✅ RedApe API Monitoring started!');
+  res.send('Monitoring started successfully!');
 });
 
-app.post('/stop-monitoring', async (req, res) => {
-  for (const id in activeTasks) {
+// Stop all monitoring (for testing)
+app.post('/stop-monitoring', (req, res) => {
+  for (let id in activeTasks) {
     activeTasks[id].stop();
   }
-  res.send('Monitoring stopped.');
+  res.send('All monitoring stopped');
 });
 
-app.get('/api/monitors', async (req, res) => {
-  const monitors = await Monitor.find({});
-  res.json(monitors);
-});
-
-app.listen(PORT, () => console.log(`🚀 RedApe running at http://localhost:${PORT}`));
+// Start server
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
