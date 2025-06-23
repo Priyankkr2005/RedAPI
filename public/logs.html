@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RedApe Logs</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      background-color: #f4f8fb;
+      padding: 2rem;
+    }
+    h2 {
+      margin-bottom: 1rem;
+    }
+    .monitor {
+      background-color: white;
+      padding: 1rem;
+      margin-bottom: 1.5rem;
+      border-radius: 8px;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+    }
+    .monitor h3 {
+      margin-top: 0;
+    }
+    .logs {
+      margin-top: 0.5rem;
+      padding-left: 1rem;
+    }
+    button {
+      background-color: #e53e3e;
+      color: white;
+      border: none;
+      padding: 0.4rem 0.8rem;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+    button:hover {
+      background-color: #c53030;
+    }
+    .log-entry {
+      margin-bottom: 0.5rem;
+    }
+  </style>
+</head>
+<body>
+  <h2>📄 Registered APIs and Downtime Logs</h2>
+  <div id="container">Loading...</div>
+
+  <script>
+    async function fetchMonitors() {
+      const res = await fetch('/api/monitors');
+      const data = await res.json();
+      const container = document.getElementById('container');
+      container.innerHTML = '';
+
+      data.forEach(monitor => {
+        const div = document.createElement('div');
+        div.className = 'monitor';
+
+        let logsHtml = '<ul>';
+        if (monitor.logs && monitor.logs.length > 0) {
+          monitor.logs.forEach(log => {
+            logsHtml += `<li class="log-entry">
+              From ${new Date(log.start).toLocaleString()}<br/>
+              To ${new Date(log.end).toLocaleString()}<br/>
+              Duration: ${log.durationMinutes} min(s)
+            </li>`;
+          });
+        } else {
+          logsHtml += '<li>No logs recorded</li>';
+        }
+        logsHtml += '</ul>';
+
+        div.innerHTML = `
+          <h3>${monitor.url}</h3>
+          <p><strong>Name:</strong> ${monitor.name}</p>
+          <p><strong>Email:</strong> ${monitor.email}</p>
+          <p><strong>Interval:</strong> ${monitor.interval}</p>
+          <p><strong>Method:</strong> ${monitor.method ?? 'N/A'}</p>
+          <p><strong>Expected Status:</strong> ${monitor.expectedStatus ?? 'N/A'}</p>
+          <button onclick="deleteMonitor('${monitor._id}')">🗑 Delete</button>
+          <div class="logs">
+            <strong>Logs:</strong>
+            ${logsHtml}
+          </div>
+        `;
+
+        container.appendChild(div);
+      });
+    }
+
+    async function deleteMonitor(id) {
+      await fetch(`/api/monitor/${id}`, { method: 'DELETE' });
+      fetchMonitors();
+    }
+
+    fetchMonitors();
+  </script>
+</body>
+</html>
